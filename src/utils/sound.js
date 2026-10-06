@@ -1,6 +1,10 @@
 let audioContext = null;
 
 function getAudioContext() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
   if (!audioContext) {
     const AudioContext =
       window.AudioContext || window.webkitAudioContext;
@@ -13,13 +17,27 @@ function getAudioContext() {
   }
 
   if (audioContext.state === "suspended") {
-    audioContext.resume();
+    audioContext.resume().catch(() => {});
   }
 
   return audioContext;
 }
 
-function playTone(frequency, duration, type = "sine", volume = 0.15) {
+// Enable audio after a user interaction.
+export function enableScannerSound() {
+  const ctx = getAudioContext();
+
+  if (ctx && ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+}
+
+function playTone(
+  frequency,
+  duration,
+  type = "sine",
+  volume = 0.15
+) {
   const ctx = getAudioContext();
 
   if (!ctx) return;
@@ -28,9 +46,17 @@ function playTone(frequency, duration, type = "sine", volume = 0.15) {
   const gainNode = ctx.createGain();
 
   oscillator.type = type;
-  oscillator.frequency.value = frequency;
 
-  gainNode.gain.setValueAtTime(volume, ctx.currentTime);
+  oscillator.frequency.setValueAtTime(
+    frequency,
+    ctx.currentTime
+  );
+
+  gainNode.gain.setValueAtTime(
+    volume,
+    ctx.currentTime
+  );
+
   gainNode.gain.exponentialRampToValueAtTime(
     0.001,
     ctx.currentTime + duration
@@ -45,20 +71,20 @@ function playTone(frequency, duration, type = "sine", volume = 0.15) {
 
 // Valid ticket
 export function playSuccessSound() {
-  playTone(880, 0.15, "sine", 0.2);
+  playTone(880, 0.12, "sine", 0.2);
 
   setTimeout(() => {
     playTone(1200, 0.18, "sine", 0.2);
   }, 100);
 }
 
-// Already checked-in ticket
+// Already checked in
 export function playWarningSound() {
-  playTone(700, 0.18, "square", 0.12);
+  playTone(650, 0.15, "square", 0.12);
 
   setTimeout(() => {
-    playTone(500, 0.22, "square", 0.12);
-  }, 150);
+    playTone(450, 0.22, "square", 0.12);
+  }, 160);
 }
 
 // Invalid ticket
