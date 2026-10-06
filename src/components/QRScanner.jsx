@@ -1,21 +1,25 @@
 import { useEffect, useRef } from "react";
-import { Html5Qrcode } from "html5-qrcode";
+import {
+  Html5Qrcode,
+  Html5QrcodeSupportedFormats,
+} from "html5-qrcode";
 
-export default function QRScanner({
-  onScan,
-  onError,
-}) {
+export default function QRScanner({ onScan, onError }) {
   const scannerRef = useRef(null);
-  const hasScannedRef = useRef(false);
+  const startedRef = useRef(false);
+  const handledRef = useRef(false);
 
   useEffect(() => {
-    const scanner = new Html5Qrcode(
-      "qr-reader"
-    );
+    const scannerId = "event-qr-reader";
+
+    const scanner = new Html5Qrcode(scannerId, {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.QR_CODE,
+      ],
+      verbose: false,
+    });
 
     scannerRef.current = scanner;
-
-    let mounted = true;
 
     const startScanner = async () => {
       try {
@@ -29,80 +33,72 @@ export default function QRScanner({
               width: 250,
               height: 250,
             },
+            aspectRatio: 1,
           },
           async (decodedText) => {
-            if (
-              !mounted ||
-              hasScannedRef.current
-            ) {
-              return;
-            }
+            if (handledRef.current) return;
 
-            hasScannedRef.current = true;
-
-            const ticketId =
-              decodedText.trim();
+            handledRef.current = true;
 
             try {
               await scanner.stop();
-            } catch (error) {
-              console.warn(
-                "Scanner stop warning:",
-                error
-              );
+            } catch {
+              // Scanner may already be stopped.
             }
 
-            if (mounted) {
-              onScan(ticketId);
-            }
+            onScan(decodedText);
           },
           () => {
-            // Normal QR scanning failures
-            // are ignored.
+            // Ignore normal QR scanning failures.
           }
         );
-      } catch (error) {
-        console.error(
-          "Camera initialization error:",
-          error
-        );
 
-        if (mounted && onError) {
-          onError(
-            "Unable to access the camera. Please allow camera permission and try again."
-          );
-        }
+        startedRef.current = true;
+      } catch (error) {
+        console.error("Scanner start error:", error);
+
+        onError(
+          "Unable to access the camera. Please allow camera permission and try again."
+        );
       }
     };
 
     startScanner();
 
     return () => {
-      mounted = false;
-      hasScannedRef.current = true;
+      const cleanup = async () => {
+        try {
+          if (startedRef.current) {
+            await scanner.stop();
+          }
+        } catch {
+          // Ignore cleanup errors.
+        }
 
-      if (scannerRef.current) {
-        scannerRef.current
-          .stop()
-          .catch(() => {})
-          .finally(() => {
-            scannerRef.current
-              ?.clear()
-              .catch(() => {});
-          });
-      }
+        try {
+          await scanner.clear();
+        } catch {
+          // Ignore cleanup errors.
+        }
+      };
+
+      cleanup();
     };
   }, [onScan, onError]);
 
   return (
     <div className="scanner-wrapper">
+      <div
+        id="event-qr-reader"
+        className="qr-reader"
+      />
 
-      <div id="qr-reader"></div>
-
-      <p className="scanner-hint">
-        Point the camera at the ticket QR code
-      </p>
-
+      <div className="scanner-instruction">
+        <strong>Point the camera at the QR code</strong>
+        <span>
+          The ticket will be checked automatically.
+        </span>
+      </div>
     </div>
   );
 }

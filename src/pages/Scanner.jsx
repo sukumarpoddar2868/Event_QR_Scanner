@@ -1,54 +1,53 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import QRScanner from "../components/QRScanner";
 import {
-  checkInTicket,
-  getAllTickets,
   addTickets,
+  checkInTicket,
+  clearTickets,
+  getAllTickets,
 } from "../db/database";
 import { readExcelFile } from "../utils/excel";
 
 export default function Scanner() {
   const [tickets, setTickets] = useState([]);
 
-  const [scanResult, setScanResult] = useState(null);
-  const [scannerKey, setScannerKey] = useState(0);
+  const [scanResult, setScanResult] =
+    useState(null);
 
-  const [cameraError, setCameraError] = useState("");
+  const [scannerKey, setScannerKey] =
+    useState(0);
 
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [showImportConfirmation, setShowImportConfirmation] =
+  const [error, setError] = useState("");
+
+  const [selectedFile, setSelectedFile] =
+    useState(null);
+
+  const [importPreview, setImportPreview] =
+    useState(null);
+
+  const [
+    showImportConfirmation,
+    setShowImportConfirmation,
+  ] = useState(false);
+
+  const [isImporting, setIsImporting] =
     useState(false);
-  const [importPreview, setImportPreview] = useState(null);
-  const [isImporting, setIsImporting] = useState(false);
-
-  // ----------------------------------------
-  // Load tickets from IndexedDB
-  // ----------------------------------------
 
   useEffect(() => {
-    const loadTickets = async () => {
+    async function load() {
       try {
-        const storedTickets = await getAllTickets();
-
-        setTickets(storedTickets);
-      } catch (error) {
-        console.error(
-          "Failed to load tickets:",
-          error
-        );
-
-        setCameraError(
-          "Failed to load tickets from local database."
+        const stored = await getAllTickets();
+        setTickets(stored);
+      } catch (err) {
+        console.error(err);
+        setError(
+          "Failed to load scanner database."
         );
       }
-    };
+    }
 
-    loadTickets();
+    load();
   }, []);
-
-  // ----------------------------------------
-  // Check-in counter
-  // ----------------------------------------
 
   const checkedInCount = tickets.filter(
     (ticket) => ticket.checkedIn
@@ -57,178 +56,137 @@ export default function Scanner() {
   const remainingCount =
     tickets.length - checkedInCount;
 
-  // ----------------------------------------
-  // Handle QR scan
-  // ----------------------------------------
+  const handleQRScan = useCallback(
+    async (ticketId) => {
+      setError("");
 
-  const handleQRScan = async (ticketId) => {
-    setCameraError("");
+      const cleanId = String(ticketId)
+        .trim()
+        .toUpperCase();
 
-    const cleanTicketId = ticketId.trim();
-
-    if (!cleanTicketId) {
-      setScanResult({
-        type: "error",
-        title: "INVALID QR CODE",
-        message: "The QR code does not contain a ticket ID.",
-      });
-
-      return;
-    }
-
-    try {
-      const result =
-        await checkInTicket(cleanTicketId);
-
-      // -------------------------------
-      // ENTRY ALLOWED
-      // -------------------------------
-
-      if (result.success) {
-        setScanResult({
-          type: "success",
-          title: "ENTRY ALLOWED",
-          ticket: result.ticket,
-        });
-
-        // Update React state immediately
-        setTickets((currentTickets) =>
-          currentTickets.map((ticket) =>
-            ticket.ticket_id === cleanTicketId
-              ? result.ticket
-              : ticket
-          )
-        );
-
-        return;
-      }
-
-      // -------------------------------
-      // ALREADY CHECKED IN
-      // -------------------------------
-
-      if (
-        result.reason ===
-        "ALREADY_CHECKED_IN"
-      ) {
-        setScanResult({
-          type: "warning",
-          title: "ALREADY CHECKED IN",
-          ticket: result.ticket,
-        });
-
-        return;
-      }
-
-      // -------------------------------
-      // INVALID TICKET
-      // -------------------------------
-
-      if (
-        result.reason === "NOT_FOUND"
-      ) {
+      if (!cleanId) {
         setScanResult({
           type: "error",
-          title: "INVALID TICKET",
-          ticket: {
-            ticket_id: cleanTicketId,
-          },
+          title: "INVALID QR CODE",
           message:
-            "This ticket was not found in the imported ticket list.",
+            "The QR code does not contain a ticket ID.",
         });
 
         return;
       }
 
-      // -------------------------------
-      // UNKNOWN RESULT
-      // -------------------------------
+      try {
+        const result =
+          await checkInTicket(cleanId);
 
-      setScanResult({
-        type: "error",
-        title: "CHECK-IN FAILED",
-        message:
-          "Unable to process this ticket.",
-      });
-    } catch (error) {
-      console.error(
-        "Check-in error:",
-        error
-      );
+        if (result.success) {
+          setScanResult({
+            type: "success",
+            title: "ENTRY ALLOWED",
+            ticket: result.ticket,
+          });
 
-      setScanResult({
-        type: "error",
-        title: "SCAN ERROR",
-        message:
-          "Something went wrong while checking this ticket.",
-      });
-    }
-  };
+          setTickets((current) =>
+            current.map((ticket) =>
+              ticket.ticket_id === cleanId
+                ? result.ticket
+                : ticket
+            )
+          );
 
-  // ----------------------------------------
-  // Camera error
-  // ----------------------------------------
+          return;
+        }
 
-  const handleScannerError = (message) => {
-    setCameraError(message);
-  };
+        if (
+          result.reason ===
+          "ALREADY_CHECKED_IN"
+        ) {
+          setScanResult({
+            type: "warning",
+            title: "ALREADY CHECKED IN",
+            ticket: result.ticket,
+          });
 
-  // ----------------------------------------
-  // Scan next ticket
-  // ----------------------------------------
+          return;
+        }
 
-  const handleScanNext = () => {
+        if (
+          result.reason === "NOT_FOUND"
+        ) {
+          setScanResult({
+            type: "error",
+            title: "INVALID TICKET",
+            ticket: {
+              ticket_id: cleanId,
+            },
+            message:
+              "This ticket was not found in the scanner database.",
+          });
+
+          return;
+        }
+
+        setScanResult({
+          type: "error",
+          title: "CHECK-IN FAILED",
+          message:
+            "Unable to process this ticket.",
+        });
+      } catch (err) {
+        console.error(err);
+
+        setScanResult({
+          type: "error",
+          title: "SCAN ERROR",
+          message:
+            "Something went wrong while checking this ticket.",
+        });
+      }
+    },
+    []
+  );
+
+  const handleScannerError = useCallback(
+    (message) => {
+      setError(message);
+    },
+    []
+  );
+
+  function scanNext() {
     setScanResult(null);
-    setCameraError("");
+    setError("");
 
-    // Force QRScanner to mount again
     setScannerKey(
-      (currentKey) => currentKey + 1
+      (current) => current + 1
     );
-  };
-
-  // ----------------------------------------
-  // Select Excel file
-  // ----------------------------------------
+  }
 
   async function handleExcelSelect(event) {
     const file = event.target.files[0];
 
-    // Allow selecting the same file again
     event.target.value = "";
 
-    if (!file) {
-      return;
-    }
+    if (!file) return;
 
-    setCameraError("");
+    setError("");
 
     try {
-      const rows =
-        await readExcelFile(file);
-
-      // ------------------------------------
-      // Empty file
-      // ------------------------------------
+      const rows = await readExcelFile(file);
 
       if (rows.length === 0) {
-        setCameraError(
-          "The Excel file is empty."
-        );
-
+        setError("The Excel file is empty.");
         return;
       }
 
-      // ------------------------------------
-      // Convert Excel rows
-      // ------------------------------------
-
-      const importedTickets =
-        rows.map((row) => ({
+      const importedTickets = rows.map(
+        (row) => ({
           sl_no: Number(row.sl_no),
           ticket_id: String(
             row.ticket_id || ""
-          ).trim(),
+          )
+            .trim()
+            .toUpperCase(),
           name: String(
             row.name || ""
           ).trim(),
@@ -237,13 +195,10 @@ export default function Scanner() {
               row.phone ||
               ""
           ).trim(),
-        }));
+        })
+      );
 
-      // ------------------------------------
-      // Validate rows
-      // ------------------------------------
-
-      const invalidRowIndex =
+      const invalidIndex =
         importedTickets.findIndex(
           (ticket) =>
             !ticket.ticket_id ||
@@ -251,47 +206,36 @@ export default function Scanner() {
             !ticket.number
         );
 
-      if (invalidRowIndex !== -1) {
-        setCameraError(
+      if (invalidIndex !== -1) {
+        setError(
           `Incomplete ticket information found in Excel row ${
-            invalidRowIndex + 2
+            invalidIndex + 2
           }.`
         );
 
         return;
       }
 
-      // ------------------------------------
-      // Check duplicate IDs inside Excel
-      // ------------------------------------
-
-      const uploadedIds =
-        importedTickets.map(
-          (ticket) =>
-            ticket.ticket_id.toLowerCase()
+      const ids =
+        importedTickets.map((ticket) =>
+          ticket.ticket_id.toLowerCase()
         );
 
       if (
-        new Set(uploadedIds).size !==
-        uploadedIds.length
+        new Set(ids).size !== ids.length
       ) {
-        setCameraError(
+        setError(
           "Duplicate ticket IDs were found inside the Excel file."
         );
 
         return;
       }
 
-      // ------------------------------------
-      // Find existing tickets
-      // ------------------------------------
-
-      const existingIds =
-        new Set(
-          tickets.map((ticket) =>
-            ticket.ticket_id.toLowerCase()
-          )
-        );
+      const existingIds = new Set(
+        tickets.map((ticket) =>
+          ticket.ticket_id.toLowerCase()
+        )
+      );
 
       const newTickets =
         importedTickets.filter(
@@ -302,16 +246,11 @@ export default function Scanner() {
         );
 
       const existingTickets =
-        importedTickets.filter(
-          (ticket) =>
-            existingIds.has(
-              ticket.ticket_id.toLowerCase()
-            )
+        importedTickets.filter((ticket) =>
+          existingIds.has(
+            ticket.ticket_id.toLowerCase()
+          )
         );
-
-      // ------------------------------------
-      // Prepare confirmation
-      // ------------------------------------
 
       setSelectedFile(file);
 
@@ -322,159 +261,107 @@ export default function Scanner() {
       });
 
       setShowImportConfirmation(true);
-    } catch (error) {
-      console.error(
-        "Excel import error:",
-        error
-      );
+    } catch (err) {
+      console.error(err);
 
-      setCameraError(
+      setError(
         "Failed to read the Excel file."
       );
     }
   }
 
-  // ----------------------------------------
-  // Confirm Excel import
-  // ----------------------------------------
+  async function confirmImport() {
+    if (!importPreview) return;
 
-  async function handleConfirmImport() {
-    if (!importPreview) {
-      return;
-    }
+    if (
+      importPreview.newTickets.length === 0
+    ) {
+      cancelImport();
 
-    const {
-      newTickets,
-      existingTickets,
-    } = importPreview;
-
-    if (newTickets.length === 0) {
-      setCameraError(
+      setError(
         "All tickets in this Excel file already exist."
       );
-
-      handleCancelImport();
 
       return;
     }
 
     setIsImporting(true);
-    setCameraError("");
+    setError("");
 
     try {
-      // Store tickets in IndexedDB
-      await addTickets(newTickets);
-
-      // Reload database
-      const updatedTickets =
-        await getAllTickets();
-
-      setTickets(updatedTickets);
-
-      // Close modal
-      setSelectedFile(null);
-      setImportPreview(null);
-      setShowImportConfirmation(false);
-
-      if (existingTickets.length > 0) {
-        setCameraError(
-          `${newTickets.length} new tickets imported. ${existingTickets.length} existing tickets skipped.`
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Failed to import tickets:",
-        error
+      await addTickets(
+        importPreview.newTickets
       );
 
-      setCameraError(
-        "Failed to import tickets into the local database."
+      const updated =
+        await getAllTickets();
+
+      setTickets(updated);
+
+      const newCount =
+        importPreview.newTickets.length;
+
+      const existingCount =
+        importPreview.existingTickets.length;
+
+      cancelImport();
+
+      if (existingCount > 0) {
+        setError(
+          `${newCount} new tickets imported. ${existingCount} existing tickets skipped.`
+        );
+      }
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        "Failed to import tickets into the scanner database."
       );
     } finally {
       setIsImporting(false);
     }
   }
 
-  // ----------------------------------------
-  // Cancel Excel import
-  // ----------------------------------------
-
-  function handleCancelImport() {
+  function cancelImport() {
     setSelectedFile(null);
     setImportPreview(null);
     setShowImportConfirmation(false);
   }
 
-  // ----------------------------------------
-  // Clear scanner database
-  // ----------------------------------------
-
   async function handleClearTickets() {
-    const confirmed =
-      window.confirm(
-        "Are you sure you want to remove all tickets from this scanner device?"
-      );
+    const confirmed = window.confirm(
+      "Are you sure you want to remove all tickets from this scanner device?"
+    );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     try {
-      const db = await import(
-        "../db/database"
-      );
-
-      // Open database
-      const database =
-        await db.dbPromise;
-
-      const transaction =
-        database.transaction(
-          "tickets",
-          "readwrite"
-        );
-
-      await transaction
-        .objectStore("tickets")
-        .clear();
-
-      await transaction.done;
+      await clearTickets();
 
       setTickets([]);
       setScanResult(null);
 
-      setCameraError(
-        "All tickets were removed from this scanner device."
+      setError(
+        "All tickets were removed from this scanner."
       );
-    } catch (error) {
-      console.error(
-        "Failed to clear tickets:",
-        error
-      );
+    } catch (err) {
+      console.error(err);
 
-      setCameraError(
-        "Failed to clear scanner data."
+      setError(
+        "Failed to clear scanner database."
       );
     }
   }
 
   return (
     <main className="app-shell">
-
-      {/* =================================
-          HEADER
-      ================================== */}
-
       <header className="topbar">
-
         <div>
-          <div className="card-kicker">
+          <div className="eyebrow">
             EVENT CHECK-IN
           </div>
 
-          <h1>
-            Ticket Scanner
-          </h1>
+          <h1>Ticket Scanner</h1>
 
           <p>
             Scan attendee QR codes and manage
@@ -482,38 +369,23 @@ export default function Scanner() {
           </p>
         </div>
 
-        <div className="topbar-actions">
-
-          <a
-            href="/"
-            className="btn btn-secondary"
-          >
-            Ticket Generator
-          </a>
-
-        </div>
-
+        <a
+          href="/"
+          className="button secondary"
+        >
+          Ticket Generator
+        </a>
       </header>
 
-      {/* =================================
-          MESSAGE
-      ================================== */}
-
-      {cameraError && (
-        <div className="message error">
-          {cameraError}
+      {error && (
+        <div className="alert error">
+          {error}
         </div>
       )}
 
-      {/* =================================
-          CHECK-IN STATUS
-      ================================== */}
-
-      <section className="progress-card card">
-
+      <section className="progress-panel scanner-progress">
         <div>
-
-          <div className="card-kicker">
+          <div className="eyebrow">
             CHECK-IN STATUS
           </div>
 
@@ -523,56 +395,37 @@ export default function Scanner() {
           </h2>
 
           <p>
-            {tickets.length === 0
-              ? "No tickets have been imported yet."
-              : "Tickets checked in on this scanner device."}
+            Tickets checked in on this scanner
+            device.
           </p>
-
         </div>
 
-        <div className="progress-next">
-
-          <span>
-            Remaining
-          </span>
+        <div className="next-ticket">
+          <span>Remaining</span>
 
           <strong>
             {remainingCount}
           </strong>
-
         </div>
-
       </section>
 
-      {/* =================================
-          IMPORT MASTER EXCEL
-      ================================== */}
-
-      <section className="card bulk-card">
-
-        <div className="card-header">
-
+      <section className="card">
+        <div className="section-heading">
           <div>
-
-            <div className="card-kicker">
+            <div className="eyebrow">
               TICKET DATABASE
             </div>
 
-            <h2>
-              Import Master Excel
-            </h2>
+            <h2>Import Master Excel</h2>
 
             <p>
               Load the master ticket file before
               starting the event.
             </p>
-
           </div>
-
         </div>
 
-        <div className="upload-box">
-
+        <div className="upload-area">
           <div className="upload-icon">
             XLSX
           </div>
@@ -586,25 +439,20 @@ export default function Scanner() {
             Ticket Generator.
           </p>
 
-          <label className="upload-button">
-
+          <label className="button secondary">
             Choose Excel File
 
             <input
               type="file"
               accept=".xlsx,.xls"
               hidden
-              onChange={
-                handleExcelSelect
-              }
+              onChange={handleExcelSelect}
             />
-
           </label>
-
         </div>
 
         {tickets.length > 0 && (
-          <div className="bulk-note">
+          <div className="loaded-info">
             <strong>
               {tickets.length}
             </strong>{" "}
@@ -612,74 +460,43 @@ export default function Scanner() {
             scanner.
           </div>
         )}
-
       </section>
 
-      {/* =================================
-          SCANNER
-      ================================== */}
-
       <section className="card scanner-card">
-
-        <div className="card-header">
-
+        <div className="section-heading">
           <div>
-
-            <div className="card-kicker">
+            <div className="eyebrow">
               LIVE SCANNER
             </div>
 
-            <h2>
-              Scan Ticket
-            </h2>
-
+            <h2>Scan Ticket</h2>
           </div>
-
         </div>
 
-        {/* No tickets */}
-
         {tickets.length === 0 ? (
-
           <div className="empty-state">
-
-            <div className="upload-icon">
+            <div className="empty-icon">
               !
             </div>
 
-            <h3>
-              No tickets loaded
-            </h3>
+            <h3>No tickets loaded</h3>
 
             <p>
-              Import the master Excel file
-              before scanning tickets.
+              Import the master Excel file before
+              scanning tickets.
             </p>
-
           </div>
-
         ) : !scanResult ? (
-
-          /* Scanner */
-
           <QRScanner
             key={scannerKey}
             onScan={handleQRScan}
-            onError={
-              handleScannerError
-            }
+            onError={handleScannerError}
           />
-
         ) : (
-
-          /* Scan result */
-
           <div
             className={`scan-result ${scanResult.type}`}
           >
-
-            <div className="scan-result-icon">
-
+            <div className="scan-icon">
               {scanResult.type ===
                 "success" && "✓"}
 
@@ -688,7 +505,6 @@ export default function Scanner() {
 
               {scanResult.type ===
                 "error" && "×"}
-
             </div>
 
             <h2>
@@ -697,7 +513,6 @@ export default function Scanner() {
 
             {scanResult.ticket && (
               <div className="scan-ticket-info">
-
                 <p>
                   <strong>
                     Ticket ID:
@@ -710,21 +525,16 @@ export default function Scanner() {
 
                 {scanResult.ticket.name && (
                   <p>
-                    <strong>
-                      Name:
-                    </strong>{" "}
+                    <strong>Name:</strong>{" "}
                     {
-                      scanResult.ticket
-                        .name
+                      scanResult.ticket.name
                     }
                   </p>
                 )}
 
                 {scanResult.ticket.number && (
                   <p>
-                    <strong>
-                      Number:
-                    </strong>{" "}
+                    <strong>Number:</strong>{" "}
                     {
                       scanResult.ticket
                         .number
@@ -739,47 +549,34 @@ export default function Scanner() {
                       Checked in:
                     </strong>{" "}
                     {new Date(
-                      scanResult.ticket
-                        .checkedInAt
+                      scanResult.ticket.checkedInAt
                     ).toLocaleTimeString()}
                   </p>
                 )}
-
               </div>
             )}
 
             {scanResult.message && (
-              <p className="scan-result-message">
+              <p className="scan-message">
                 {scanResult.message}
               </p>
             )}
 
             <button
-              className="btn btn-primary btn-full"
-              onClick={
-                handleScanNext
-              }
+              className="button primary full"
+              onClick={scanNext}
             >
               Scan Next Ticket
             </button>
-
           </div>
-
         )}
-
       </section>
 
-      {/* =================================
-          DATABASE ACTIONS
-      ================================== */}
-
       {tickets.length > 0 && (
-        <section className="card scanner-actions-card">
-
-          <div className="card-header">
-
+        <section className="card">
+          <div className="section-heading">
             <div>
-              <div className="card-kicker">
+              <div className="eyebrow">
                 SCANNER DATA
               </div>
 
@@ -788,104 +585,71 @@ export default function Scanner() {
               </h2>
 
               <p>
-                Ticket and check-in data is stored
-                locally on this device.
+                Ticket and check-in data is
+                stored locally on this device.
               </p>
             </div>
-
           </div>
 
           <button
-            className="btn btn-danger"
-            onClick={
-              handleClearTickets
-            }
+            className="button danger"
+            onClick={handleClearTickets}
           >
             Clear Scanner Database
           </button>
-
         </section>
       )}
 
-      {/* =================================
-          IMPORT CONFIRMATION MODAL
-      ================================== */}
-
       {showImportConfirmation &&
         importPreview && (
-          <div className="modal-overlay">
-
+          <div className="modal-backdrop">
             <div className="modal">
-
-              <div className="modal-header">
-
+              <div className="modal-top">
                 <div>
-
-                  <div className="card-kicker">
+                  <div className="eyebrow">
                     IMPORT CONFIRMATION
                   </div>
 
                   <h2>
                     Import Tickets?
                   </h2>
-
                 </div>
 
                 <button
                   className="modal-close"
-                  onClick={
-                    handleCancelImport
-                  }
+                  onClick={cancelImport}
                   disabled={isImporting}
                 >
                   ×
                 </button>
-
               </div>
 
-              <div className="modal-file">
+              <p className="file-name">
+                {selectedFile?.name}
+              </p>
 
-                <strong>
-                  {selectedFile?.name}
-                </strong>
-
-              </div>
-
-              <div className="import-stats">
-
-                <div className="import-stat">
-
-                  <span>
-                    Total Rows
-                  </span>
+              <div className="stats">
+                <div>
+                  <span>Total</span>
 
                   <strong>
                     {importPreview.total}
                   </strong>
-
                 </div>
 
-                <div className="import-stat">
-
-                  <span>
-                    New Tickets
-                  </span>
+                <div>
+                  <span>New</span>
 
                   <strong>
                     {
                       importPreview
-                        .newTickets
-                        .length
+                        .newTickets.length
                     }
                   </strong>
-
                 </div>
 
-                <div className="import-stat">
-
-                  <span>
-                    Existing
-                  </span>
+                <div>
+                  <span>Existing</span>
 
                   <strong>
                     {
@@ -894,48 +658,38 @@ export default function Scanner() {
                         .length
                     }
                   </strong>
-
                 </div>
-
               </div>
 
               {importPreview
-                .existingTickets
-                .length > 0 && (
-                <div className="modal-warning">
-
+                .existingTickets.length >
+                0 && (
+                <div className="warning-box">
                   {
                     importPreview
                       .existingTickets
                       .length
                   }{" "}
-                  ticket IDs already exist on
-                  this scanner and will be skipped.
-
+                  existing ticket IDs will
+                  be skipped.
                 </div>
               )}
 
               <div className="modal-actions">
-
                 <button
-                  className="btn btn-secondary"
-                  onClick={
-                    handleCancelImport
-                  }
+                  className="button secondary"
+                  onClick={cancelImport}
                   disabled={isImporting}
                 >
                   Cancel
                 </button>
 
                 <button
-                  className="btn btn-primary"
-                  onClick={
-                    handleConfirmImport
-                  }
+                  className="button primary"
+                  onClick={confirmImport}
                   disabled={
                     isImporting ||
-                    importPreview
-                      .newTickets
+                    importPreview.newTickets
                       .length === 0
                   }
                 >
@@ -943,14 +697,10 @@ export default function Scanner() {
                     ? "Importing..."
                     : "Import Tickets"}
                 </button>
-
               </div>
-
             </div>
-
           </div>
         )}
-
     </main>
   );
 }

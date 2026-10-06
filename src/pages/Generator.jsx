@@ -1,191 +1,156 @@
-import { useEffect, useState } from "react";
-import * as XLSX from "xlsx";
+import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import JSZip from "jszip";
+import { readExcelFile, downloadExcel } from "../utils/excel";
 
 const STORAGE_KEY = "event-ticket-generator";
 
+function loadTickets() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+
+    if (!stored) return [];
+
+    const parsed = JSON.parse(stored);
+
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getNextSlNo(tickets) {
+  if (tickets.length === 0) return 1;
+
+  return (
+    Math.max(
+      ...tickets.map((ticket) =>
+        Number(ticket.sl_no) || 0
+      )
+    ) + 1
+  );
+}
+
+function getNextTicketId(tickets) {
+  if (tickets.length === 0) {
+    return "EVT001";
+  }
+
+  const numbers = tickets
+    .map((ticket) => {
+      const match =
+        String(ticket.ticket_id).match(
+          /(\d+)$/
+        );
+
+      return match ? Number(match[1]) : 0;
+    })
+    .filter(Boolean);
+
+  const nextNumber =
+    numbers.length > 0
+      ? Math.max(...numbers) + 1
+      : tickets.length + 1;
+
+  return `EVT${String(nextNumber).padStart(3, "0")}`;
+}
+
 export default function Generator() {
-  const [tickets, setTickets] = useState([]);
+  const [tickets, setTickets] = useState(loadTickets);
 
   const [slNo, setSlNo] = useState(1);
   const [ticketId, setTicketId] = useState("EVT001");
   const [name, setName] = useState("");
   const [number, setNumber] = useState("");
 
-  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [selectedTicket, setSelectedTicket] =
+    useState(null);
+
   const [qrDataUrl, setQrDataUrl] = useState("");
 
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState("success");
+  const [messageType, setMessageType] =
+    useState("success");
 
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
-
-  const [selectedExcelFile, setSelectedExcelFile] = useState(null);
-  const [bulkPreview, setBulkPreview] = useState(null);
-  const [showBulkConfirmation, setShowBulkConfirmation] =
+  const [isGenerating, setIsGenerating] =
     useState(false);
-  const [isImporting, setIsImporting] = useState(false);
 
-  // ----------------------------------------
-  // Load saved generator state
-  // ----------------------------------------
+  const [isDownloading, setIsDownloading] =
+    useState(false);
 
-  useEffect(() => {
-    try {
-      const savedData = localStorage.getItem(STORAGE_KEY);
+  const [selectedExcelFile, setSelectedExcelFile] =
+    useState(null);
 
-      if (!savedData) return;
+  const [bulkPreview, setBulkPreview] =
+    useState(null);
 
-      const parsed = JSON.parse(savedData);
+  const [
+    showBulkConfirmation,
+    setShowBulkConfirmation,
+  ] = useState(false);
 
-      if (Array.isArray(parsed.tickets)) {
-        setTickets(parsed.tickets);
-      }
+  const [isImporting, setIsImporting] =
+    useState(false);
 
-      if (parsed.slNo) {
-        setSlNo(parsed.slNo);
-      }
-
-      if (parsed.ticketId) {
-        setTicketId(parsed.ticketId);
-      }
-    } catch (error) {
-      console.error("Failed to load saved generator data:", error);
-    }
-  }, []);
-
-  // ----------------------------------------
-  // Save generator state
-  // ----------------------------------------
+  const totalTickets = tickets.length;
 
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
-        tickets,
-        slNo,
-        ticketId,
-      })
+      JSON.stringify(tickets)
     );
-  }, [tickets, slNo, ticketId]);
 
-  // ----------------------------------------
-  // Messages
-  // ----------------------------------------
+    setSlNo(getNextSlNo(tickets));
+    setTicketId(getNextTicketId(tickets));
+  }, [tickets]);
 
-  function showMessage(text, type = "success") {
-    setMessage(text);
-    setMessageType(type);
-  }
-
-  // ----------------------------------------
-  // Calculate next SL number
-  // ----------------------------------------
-
-  function calculateNextSlNo(ticketList) {
-    if (ticketList.length === 0) {
-      return 1;
+  const progressText = useMemo(() => {
+    if (totalTickets === 0) {
+      return "No tickets created yet.";
     }
 
-    const numbers = ticketList
-      .map((ticket) => Number(ticket.sl_no))
-      .filter((number) => Number.isFinite(number));
-
-    if (numbers.length === 0) {
-      return 1;
-    }
-
-    return Math.max(...numbers) + 1;
-  }
-
-  // ----------------------------------------
-  // Calculate next Ticket ID
-  // ----------------------------------------
-
-  function calculateNextTicketId(ticketList) {
-    if (ticketList.length === 0) {
-      return "EVT001";
-    }
-
-    let highestNumber = 0;
-
-    for (const ticket of ticketList) {
-      const match = String(ticket.ticket_id).match(
-        /(\d+)$/
-      );
-
-      if (match) {
-        const number = Number(match[1]);
-
-        if (number > highestNumber) {
-          highestNumber = number;
-        }
-      }
-    }
-
-    const nextNumber = highestNumber + 1;
-
-    return `EVT${String(nextNumber).padStart(3, "0")}`;
-  }
-
-  // ----------------------------------------
-  // Generate QR
-  // ----------------------------------------
+    return `${totalTickets} ticket${
+      totalTickets === 1 ? "" : "s"
+    } created`;
+  }, [totalTickets]);
 
   async function generateQR(ticket) {
-    const dataUrl = await QRCode.toDataURL(
-      ticket.ticket_id,
-      {
-        width: 500,
-        margin: 2,
-        errorCorrectionLevel: "H",
-      }
-    );
-
-    setSelectedTicket(ticket);
-    setQrDataUrl(dataUrl);
-
-    return dataUrl;
+    return QRCode.toDataURL(ticket.ticket_id, {
+      width: 500,
+      margin: 2,
+      errorCorrectionLevel: "H",
+    });
   }
 
-  // ----------------------------------------
-  // Create single ticket
-  // ----------------------------------------
-
-  async function handleGenerateTicket(event) {
+  async function handleCreateTicket(event) {
     event.preventDefault();
 
-    const cleanTicketId = ticketId.trim();
+    setMessage("");
+
+    const cleanTicketId =
+      ticketId.trim().toUpperCase();
+
     const cleanName = name.trim();
     const cleanNumber = number.trim();
 
-    if (!cleanTicketId) {
-      showMessage("Please enter a ticket ID.", "error");
+    if (!cleanTicketId || !cleanName || !cleanNumber) {
+      setMessageType("error");
+      setMessage(
+        "Please fill in all ticket fields."
+      );
       return;
     }
 
-    if (!cleanName) {
-      showMessage("Please enter the attendee name.", "error");
-      return;
-    }
-
-    if (!cleanNumber) {
-      showMessage("Please enter the phone number.", "error");
-      return;
-    }
-
-    const duplicate = tickets.some(
+    const exists = tickets.some(
       (ticket) =>
         ticket.ticket_id.toLowerCase() ===
         cleanTicketId.toLowerCase()
     );
 
-    if (duplicate) {
-      showMessage(
-        `Ticket ID ${cleanTicketId} already exists.`,
-        "error"
+    if (exists) {
+      setMessageType("error");
+      setMessage(
+        `Ticket ID ${cleanTicketId} already exists.`
       );
       return;
     }
@@ -200,49 +165,52 @@ export default function Generator() {
     setIsGenerating(true);
 
     try {
-      await generateQR(ticket);
+      const qr = await generateQR(ticket);
 
-      const updatedTickets = [
-        ...tickets,
+      setTickets((current) => [
+        ...current,
         ticket,
-      ];
+      ]);
 
-      setTickets(updatedTickets);
-
-      setSlNo(
-        calculateNextSlNo(updatedTickets)
-      );
-
-      setTicketId(
-        calculateNextTicketId(updatedTickets)
-      );
+      setSelectedTicket(ticket);
+      setQrDataUrl(qr);
 
       setName("");
       setNumber("");
 
-      showMessage(
-        `${cleanTicketId} generated successfully.`
+      setMessageType("success");
+      setMessage(
+        `Ticket ${cleanTicketId} created successfully.`
       );
     } catch (error) {
       console.error(error);
 
-      showMessage(
-        "Failed to generate QR code.",
-        "error"
+      setMessageType("error");
+      setMessage(
+        "Failed to generate the QR code."
       );
     } finally {
       setIsGenerating(false);
     }
   }
 
-  // ----------------------------------------
-  // Download selected QR
-  // ----------------------------------------
+  async function handleSelectTicket(ticket) {
+    try {
+      const qr = await generateQR(ticket);
 
-  function handleDownloadQR() {
-    if (!qrDataUrl || !selectedTicket) {
-      return;
+      setSelectedTicket(ticket);
+      setQrDataUrl(qr);
+      setMessage("");
+    } catch {
+      setMessageType("error");
+      setMessage(
+        "Failed to generate the QR preview."
+      );
     }
+  }
+
+  function downloadQR() {
+    if (!selectedTicket || !qrDataUrl) return;
 
     const link = document.createElement("a");
 
@@ -251,91 +219,151 @@ export default function Generator() {
 
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    link.remove();
   }
 
-  // ----------------------------------------
-  // Parse Excel
-  // ----------------------------------------
-
-  async function parseExcelFile(file) {
-    const data = await file.arrayBuffer();
-
-    const workbook = XLSX.read(data, {
-      type: "array",
-    });
-
-    const sheet =
-      workbook.Sheets[workbook.SheetNames[0]];
-
-    const rows = XLSX.utils.sheet_to_json(sheet);
-
-    if (rows.length === 0) {
-      throw new Error("EMPTY_EXCEL");
+  function downloadMasterExcel() {
+    if (tickets.length === 0) {
+      setMessageType("error");
+      setMessage("There are no tickets to export.");
+      return;
     }
 
-    const importedTickets = [];
+    downloadExcel(
+      tickets,
+      "event-master-tickets.xlsx"
+    );
 
-    for (let index = 0; index < rows.length; index++) {
-      const row = rows[index];
+    setMessageType("success");
+    setMessage(
+      "Master Excel downloaded successfully."
+    );
+  }
 
-      const importedTicket = {
-        sl_no: Number(row.sl_no),
-        ticket_id: String(
-          row.ticket_id || ""
-        ).trim(),
-        name: String(
-          row.name || ""
-        ).trim(),
-        number: String(
-          row.number ||
-            row.phone ||
-            ""
-        ).trim(),
-      };
+  async function downloadAllQRs() {
+    if (tickets.length === 0) {
+      setMessageType("error");
+      setMessage("There are no tickets to export.");
+      return;
+    }
 
-      if (
-        !importedTicket.ticket_id ||
-        !importedTicket.name ||
-        !importedTicket.number
-      ) {
-        throw new Error(
-          `INCOMPLETE_ROW_${index + 2}`
+    setIsDownloading(true);
+    setMessage("");
+
+    try {
+      const zip = new JSZip();
+
+      for (const ticket of tickets) {
+        const dataUrl = await generateQR(ticket);
+
+        const base64 = dataUrl.split(",")[1];
+
+        zip.file(
+          `${ticket.ticket_id}.png`,
+          base64,
+          {
+            base64: true,
+          }
         );
       }
 
-      importedTickets.push(importedTicket);
-    }
+      const blob = await zip.generateAsync({
+        type: "blob",
+      });
 
-    const uploadedIds =
-      importedTickets.map((ticket) =>
-        ticket.ticket_id.toLowerCase()
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = "event-qr-codes.zip";
+
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      URL.revokeObjectURL(url);
+
+      setMessageType("success");
+      setMessage(
+        "All QR codes downloaded successfully."
       );
+    } catch (error) {
+      console.error(error);
 
-    if (
-      new Set(uploadedIds).size !==
-      uploadedIds.length
-    ) {
-      throw new Error("DUPLICATE_EXCEL");
+      setMessageType("error");
+      setMessage(
+        "Failed to create the QR ZIP file."
+      );
+    } finally {
+      setIsDownloading(false);
     }
-
-    return importedTickets;
   }
 
-  // ----------------------------------------
-  // Select Excel
-  // ----------------------------------------
-
-  async function handleExcelFileSelect(event) {
+  async function handleExcelSelect(event) {
     const file = event.target.files[0];
 
     event.target.value = "";
 
     if (!file) return;
 
+    setMessage("");
+
     try {
-      const importedTickets =
-        await parseExcelFile(file);
+      const rows = await readExcelFile(file);
+
+      if (rows.length === 0) {
+        setMessageType("error");
+        setMessage("The Excel file is empty.");
+        return;
+      }
+
+      const importedTickets = rows.map((row) => ({
+        sl_no: Number(row.sl_no),
+        ticket_id: String(
+          row.ticket_id || ""
+        )
+          .trim()
+          .toUpperCase(),
+        name: String(row.name || "").trim(),
+        number: String(
+          row.number || row.phone || ""
+        ).trim(),
+      }));
+
+      const invalidIndex =
+        importedTickets.findIndex(
+          (ticket) =>
+            !ticket.ticket_id ||
+            !ticket.name ||
+            !ticket.number
+        );
+
+      if (invalidIndex !== -1) {
+        setMessageType("error");
+        setMessage(
+          `Incomplete ticket information found in Excel row ${
+            invalidIndex + 2
+          }.`
+        );
+        return;
+      }
+
+      const uploadedIds =
+        importedTickets.map((ticket) =>
+          ticket.ticket_id.toLowerCase()
+        );
+
+      if (
+        new Set(uploadedIds).size !==
+        uploadedIds.length
+      ) {
+        setMessageType("error");
+        setMessage(
+          "Duplicate ticket IDs were found inside the Excel file."
+        );
+        return;
+      }
 
       const existingIds = new Set(
         tickets.map((ticket) =>
@@ -352,17 +380,16 @@ export default function Generator() {
         );
 
       const existingTickets =
-        importedTickets.filter(
-          (ticket) =>
-            existingIds.has(
-              ticket.ticket_id.toLowerCase()
-            )
+        importedTickets.filter((ticket) =>
+          existingIds.has(
+            ticket.ticket_id.toLowerCase()
+          )
         );
 
       setSelectedExcelFile(file);
 
       setBulkPreview({
-        importedTickets,
+        total: importedTickets.length,
         newTickets,
         existingTickets,
       });
@@ -371,310 +398,136 @@ export default function Generator() {
     } catch (error) {
       console.error(error);
 
-      if (error.message === "EMPTY_EXCEL") {
-        showMessage(
-          "The Excel file is empty.",
-          "error"
-        );
-      } else if (
-        error.message === "DUPLICATE_EXCEL"
-      ) {
-        showMessage(
-          "Duplicate ticket IDs found inside the Excel file.",
-          "error"
-        );
-      } else if (
-        error.message.startsWith("INCOMPLETE_ROW_")
-      ) {
-        const rowNumber =
-          error.message.split("_")[2];
-
-        showMessage(
-          `Incomplete data found in Excel row ${rowNumber}.`,
-          "error"
-        );
-      } else {
-        showMessage(
-          "Failed to read Excel file.",
-          "error"
-        );
-      }
+      setMessageType("error");
+      setMessage(
+        "Failed to read the Excel file."
+      );
     }
   }
 
-  // ----------------------------------------
-  // Cancel bulk import
-  // ----------------------------------------
-
-  function handleCancelBulkImport() {
-    setSelectedExcelFile(null);
-    setBulkPreview(null);
-    setShowBulkConfirmation(false);
-  }
-
-  // ----------------------------------------
-  // Confirm bulk import
-  // ----------------------------------------
-
-  async function handleConfirmBulkImport() {
+  async function handleConfirmImport() {
     if (!bulkPreview) return;
 
-    const {
-      newTickets,
-      existingTickets,
-    } = bulkPreview;
+    if (bulkPreview.newTickets.length === 0) {
+      setShowBulkConfirmation(false);
+      setSelectedExcelFile(null);
+      setBulkPreview(null);
 
-    if (newTickets.length === 0) {
-      showMessage(
-        "All tickets in this Excel already exist.",
-        "error"
+      setMessageType("error");
+      setMessage(
+        "All tickets in this Excel file already exist."
       );
 
-      handleCancelBulkImport();
       return;
     }
 
     setIsImporting(true);
 
     try {
-      const updatedTickets = [
-        ...tickets,
+      const newTickets =
+        bulkPreview.newTickets;
+
+      setTickets((current) => [
+        ...current,
         ...newTickets,
-      ];
+      ]);
 
-      setTickets(updatedTickets);
+      const firstTicket = newTickets[0];
 
-      const nextSlNo =
-        calculateNextSlNo(updatedTickets);
+      const qr = await generateQR(firstTicket);
 
-      const nextTicketId =
-        calculateNextTicketId(updatedTickets);
+      setSelectedTicket(firstTicket);
+      setQrDataUrl(qr);
 
-      setSlNo(nextSlNo);
-      setTicketId(nextTicketId);
+      setShowBulkConfirmation(false);
+      setSelectedExcelFile(null);
+      setBulkPreview(null);
 
-      const firstImportedTicket =
-        newTickets[0];
+      setMessageType("success");
 
-      await generateQR(
-        firstImportedTicket
-      );
-
-      if (existingTickets.length > 0) {
-        showMessage(
-          `${newTickets.length} new tickets imported. ${existingTickets.length} existing tickets skipped.`
+      if (
+        bulkPreview.existingTickets.length > 0
+      ) {
+        setMessage(
+          `${newTickets.length} new tickets imported. ${bulkPreview.existingTickets.length} existing tickets skipped.`
         );
       } else {
-        showMessage(
+        setMessage(
           `${newTickets.length} tickets imported successfully.`
         );
       }
-
-      handleCancelBulkImport();
     } catch (error) {
       console.error(error);
 
-      showMessage(
-        "Failed to import tickets.",
-        "error"
+      setMessageType("error");
+      setMessage(
+        "Failed to import tickets."
       );
     } finally {
       setIsImporting(false);
     }
   }
 
-  // ----------------------------------------
-  // Download Master Excel
-  // ----------------------------------------
-
-  function handleDownloadExcel() {
-    if (tickets.length === 0) {
-      showMessage(
-        "There are no tickets to export.",
-        "error"
-      );
-      return;
-    }
-
-    const worksheet =
-      XLSX.utils.json_to_sheet(tickets);
-
-    const workbook =
-      XLSX.utils.book_new();
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      worksheet,
-      "Tickets"
-    );
-
-    XLSX.writeFile(
-      workbook,
-      "event_tickets.xlsx"
-    );
+  function handleCancelImport() {
+    setSelectedExcelFile(null);
+    setBulkPreview(null);
+    setShowBulkConfirmation(false);
   }
 
-  // ----------------------------------------
-  // Download all QR codes
-  // ----------------------------------------
-
-  async function handleDownloadAllQRs() {
-    if (tickets.length === 0) {
-      showMessage(
-        "There are no tickets to download.",
-        "error"
-      );
-      return;
-    }
-
-    setIsDownloading(true);
-
-    try {
-      const zip = new JSZip();
-
-      for (const ticket of tickets) {
-        const dataUrl =
-          await QRCode.toDataURL(
-            ticket.ticket_id,
-            {
-              width: 500,
-              margin: 2,
-              errorCorrectionLevel: "H",
-            }
-          );
-
-        const base64 =
-          dataUrl.split(",")[1];
-
-        zip.file(
-          `${ticket.ticket_id}.png`,
-          base64,
-          {
-            base64: true,
-          }
-        );
-      }
-
-      const blob =
-        await zip.generateAsync({
-          type: "blob",
-        });
-
-      const url =
-        URL.createObjectURL(blob);
-
-      const link =
-        document.createElement("a");
-
-      link.href = url;
-      link.download =
-        "event_ticket_qr_codes.zip";
-
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      URL.revokeObjectURL(url);
-
-      showMessage(
-        `${tickets.length} QR codes downloaded successfully.`
-      );
-    } catch (error) {
-      console.error(error);
-
-      showMessage(
-        "Failed to create QR ZIP file.",
-        "error"
-      );
-    } finally {
-      setIsDownloading(false);
-    }
-  }
-
-  // ----------------------------------------
-  // Clear everything
-  // ----------------------------------------
-
-  function handleClearAll() {
+  function clearAllTickets() {
     const confirmed = window.confirm(
-      "Are you sure you want to delete all generated tickets from this browser?"
+      "Are you sure you want to delete all generated tickets?"
     );
 
     if (!confirmed) return;
 
+    localStorage.removeItem(STORAGE_KEY);
+
     setTickets([]);
-    setSlNo(1);
-    setTicketId("EVT001");
-    setName("");
-    setNumber("");
     setSelectedTicket(null);
     setQrDataUrl("");
 
-    localStorage.removeItem(
-      STORAGE_KEY
-    );
-
-    showMessage(
-      "All generator data has been cleared."
-    );
+    setMessageType("success");
+    setMessage("All tickets have been deleted.");
   }
 
   return (
     <main className="app-shell">
-
-      {/* ================================
-          HEADER
-      ================================= */}
-
       <header className="topbar">
         <div>
-          <div className="card-kicker">
-            EVENT MANAGEMENT
+          <div className="eyebrow">
+            EVENT QR SYSTEM
           </div>
 
           <h1>Ticket Generator</h1>
 
           <p>
-            Create tickets and generate QR codes
-            for event check-in.
+            Create event tickets and generate QR
+            codes for attendee check-in.
           </p>
         </div>
 
-        <div className="topbar-actions">
-          <a
-            href="/scanner"
-            className="btn btn-secondary"
-          >
-            Open Scanner
-          </a>
-        </div>
+        <a
+          href="/scanner"
+          className="button secondary"
+        >
+          Open Scanner
+        </a>
       </header>
 
-      {/* ================================
-          MESSAGE
-      ================================= */}
-
       {message && (
-        <div
-          className={`message ${messageType}`}
-        >
+        <div className={`alert ${messageType}`}>
           {message}
         </div>
       )}
 
-      {/* ================================
-          PROGRESS
-      ================================= */}
-
-      <section className="progress-card card">
+      <section className="progress-panel">
         <div>
-          <div className="card-kicker">
+          <div className="eyebrow">
             GENERATOR PROGRESS
           </div>
 
-          <h2>
-            {tickets.length} tickets created
-          </h2>
+          <h2>{progressText}</h2>
 
           <p>
             Your progress is saved automatically
@@ -682,7 +535,7 @@ export default function Generator() {
           </p>
         </div>
 
-        <div className="progress-next">
+        <div className="next-ticket">
           <span>Next SL No.</span>
           <strong>{slNo}</strong>
 
@@ -691,21 +544,11 @@ export default function Generator() {
         </div>
       </section>
 
-      {/* ================================
-          MAIN GRID
-      ================================= */}
-
-      <section className="dashboard-grid">
-
-        {/* ================================
-            SINGLE TICKET
-        ================================= */}
-
+      <section className="two-column">
         <div className="card">
-
-          <div className="card-header">
+          <div className="section-heading">
             <div>
-              <div className="card-kicker">
+              <div className="eyebrow">
                 SINGLE TICKET
               </div>
 
@@ -714,120 +557,85 @@ export default function Generator() {
           </div>
 
           <form
-            onSubmit={handleGenerateTicket}
+            onSubmit={handleCreateTicket}
+            className="ticket-form"
           >
+            <label>
+              SL No.
+              <input
+                type="number"
+                value={slNo}
+                onChange={(e) =>
+                  setSlNo(e.target.value)
+                }
+                min="1"
+              />
+            </label>
 
-            <div className="form-grid">
+            <label>
+              Ticket ID
+              <input
+                value={ticketId}
+                onChange={(e) =>
+                  setTicketId(e.target.value)
+                }
+                placeholder="EVT001"
+              />
+            </label>
 
-              <div className="form-group">
-                <label>
-                  SL No.
-                </label>
+            <label>
+              Attendee Name
+              <input
+                value={name}
+                onChange={(e) =>
+                  setName(e.target.value)
+                }
+                placeholder="Rahul Kumar"
+              />
+            </label>
 
-                <input
-                  type="number"
-                  value={slNo}
-                  onChange={(event) =>
-                    setSlNo(
-                      Number(event.target.value)
-                    )
-                  }
-                  min="1"
-                />
-              </div>
-
-              <div className="form-group">
-                <label>
-                  Ticket ID
-                </label>
-
-                <input
-                  type="text"
-                  value={ticketId}
-                  onChange={(event) =>
-                    setTicketId(
-                      event.target.value
-                    )
-                  }
-                  placeholder="EVT001"
-                />
-              </div>
-
-              <div className="form-group">
-                <label>
-                  Attendee Name
-                </label>
-
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(event) =>
-                    setName(
-                      event.target.value
-                    )
-                  }
-                  placeholder="Rahul Kumar"
-                />
-              </div>
-
-              <div className="form-group">
-                <label>
-                  Phone Number
-                </label>
-
-                <input
-                  type="text"
-                  value={number}
-                  onChange={(event) =>
-                    setNumber(
-                      event.target.value
-                    )
-                  }
-                  placeholder="9876543210"
-                />
-              </div>
-
-            </div>
+            <label>
+              Mobile Number
+              <input
+                value={number}
+                onChange={(e) =>
+                  setNumber(e.target.value)
+                }
+                placeholder="9876543210"
+              />
+            </label>
 
             <button
               type="submit"
-              className="btn btn-primary btn-full"
+              className="button primary full"
               disabled={isGenerating}
             >
               {isGenerating
                 ? "Generating..."
-                : "Generate Ticket QR"}
+                : "Create Ticket & QR"}
             </button>
-
           </form>
         </div>
 
-        {/* ================================
-            QR PREVIEW
-        ================================= */}
-
         <div className="card qr-card">
-
-          <div className="card-header">
+          <div className="section-heading">
             <div>
-              <div className="card-kicker">
+              <div className="eyebrow">
                 QR PREVIEW
               </div>
 
-              <h2>Generated QR</h2>
+              <h2>Ticket QR</h2>
             </div>
           </div>
 
-          {qrDataUrl && selectedTicket ? (
-            <>
-              <div className="qr-preview">
-                <img
-                  src={qrDataUrl}
-                  alt={`QR code for ${selectedTicket.ticket_id}`}
-                />
-              </div>
+          {selectedTicket && qrDataUrl ? (
+            <div className="qr-preview">
+              <img
+                src={qrDataUrl}
+                alt={`QR code for ${selectedTicket.ticket_id}`}
+              />
 
-              <div className="qr-info">
+              <div className="qr-ticket">
                 <strong>
                   {selectedTicket.ticket_id}
                 </strong>
@@ -842,119 +650,101 @@ export default function Generator() {
               </div>
 
               <button
-                className="btn btn-primary btn-full"
-                onClick={handleDownloadQR}
+                className="button primary full"
+                onClick={downloadQR}
               >
-                Download QR PNG
+                Download QR
               </button>
-            </>
+            </div>
           ) : (
             <div className="empty-state">
-              <div className="upload-icon">
+              <div className="empty-icon">
                 QR
               </div>
 
-              <h3>
-                No QR selected
-              </h3>
+              <h3>No QR selected</h3>
 
               <p>
-                Generate a ticket to preview
-                its QR code here.
+                Create a ticket or select one from
+                the table below.
               </p>
             </div>
           )}
-
         </div>
-
       </section>
 
-      {/* ================================
-          BULK IMPORT
-      ================================= */}
-
-      <section className="card bulk-card">
-
-        <div className="card-header">
+      <section className="card">
+        <div className="section-heading">
           <div>
-            <div className="card-kicker">
-              BULK OPERATIONS
+            <div className="eyebrow">
+              BULK IMPORT
             </div>
 
             <h2>Import Tickets from Excel</h2>
 
             <p>
-              Upload an Excel file containing
-              sl_no, ticket_id, name and number.
+              Excel columns: sl_no, ticket_id,
+              name, number
             </p>
           </div>
         </div>
 
-        <div className="upload-box">
-
+        <div className="upload-area">
           <div className="upload-icon">
             XLSX
           </div>
 
-          <h3>
-            Upload Master Ticket Excel
-          </h3>
+          <h3>Import Event Tickets</h3>
 
           <p>
-            Existing ticket IDs will be skipped.
+            Upload your Excel ticket list.
           </p>
 
-          <label className="upload-button">
+          <label className="button secondary">
             Choose Excel File
 
             <input
               type="file"
               accept=".xlsx,.xls"
-              onChange={handleExcelFileSelect}
               hidden
+              onChange={handleExcelSelect}
             />
           </label>
-
         </div>
-
-        <div className="bulk-note">
-          Required columns:
-          <strong>
-            sl_no, ticket_id, name, number
-          </strong>
-        </div>
-
       </section>
 
-      {/* ================================
-          ACTIONS
-      ================================= */}
-
       <section className="card">
-
-        <div className="card-header">
+        <div className="section-heading">
           <div>
-            <div className="card-kicker">
-              EXPORT
+            <div className="eyebrow">
+              EXPORT & DATA
             </div>
 
-            <h2>Ticket Files</h2>
+            <h2>Ticket Database</h2>
+
+            <p>
+              {tickets.length} ticket
+              {tickets.length === 1 ? "" : "s"}{" "}
+              currently stored.
+            </p>
           </div>
         </div>
 
-        <div className="form-grid">
-
+        <div className="action-row">
           <button
-            className="btn btn-secondary"
-            onClick={handleDownloadExcel}
+            className="button secondary"
+            onClick={downloadMasterExcel}
           >
             Download Master Excel
           </button>
 
           <button
-            className="btn btn-secondary"
-            onClick={handleDownloadAllQRs}
-            disabled={isDownloading}
+            className="button secondary"
+            onClick={downloadAllQRs}
+            disabled={
+              isDownloading ||
+              tickets.length === 0
+            }
           >
             {isDownloading
               ? "Creating ZIP..."
@@ -962,234 +752,170 @@ export default function Generator() {
           </button>
 
           <button
-            className="btn btn-danger"
-            onClick={handleClearAll}
+            className="button danger"
+            onClick={clearAllTickets}
+            disabled={tickets.length === 0}
           >
-            Clear Generator Data
+            Clear All
           </button>
-
         </div>
-
       </section>
 
-      {/* ================================
-          TICKET TABLE
-      ================================= */}
-
-      <section className="card table-card">
-
-        <div className="table-header">
-
+      <section className="card">
+        <div className="table-heading">
           <div>
-            <div className="card-kicker">
-              TICKET LIST
+            <div className="eyebrow">
+              TICKETS
             </div>
 
-            <h2>
-              Generated Tickets
-            </h2>
+            <h2>Generated Tickets</h2>
           </div>
 
-          <strong>
-            {tickets.length}
-          </strong>
-
+          <strong>{tickets.length}</strong>
         </div>
 
-        <div className="table-wrapper">
-
-          <table>
-
-            <thead>
-              <tr>
-                <th>SL No.</th>
-                <th>Ticket ID</th>
-                <th>Name</th>
-                <th>Number</th>
-                <th>QR</th>
-              </tr>
-            </thead>
-
-            <tbody>
-
-              {tickets.map((ticket) => (
-                <tr
-                  key={ticket.ticket_id}
-                >
-                  <td>
-                    {ticket.sl_no}
-                  </td>
-
-                  <td>
-                    <strong>
-                      {ticket.ticket_id}
-                    </strong>
-                  </td>
-
-                  <td>
-                    {ticket.name}
-                  </td>
-
-                  <td>
-                    {ticket.number}
-                  </td>
-
-                  <td>
-
-                    <button
-                      className="table-action"
-                      onClick={async () => {
-                        await generateQR(
-                          ticket
-                        );
-                      }}
-                    >
-                      View QR
-                    </button>
-
-                  </td>
-                </tr>
-              ))}
-
-              {tickets.length === 0 && (
+        {tickets.length === 0 ? (
+          <div className="empty-table">
+            No tickets have been created yet.
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
                 <tr>
-                  <td
-                    colSpan="5"
-                    className="table-empty"
-                  >
-                    No tickets created yet.
-                  </td>
+                  <th>SL No.</th>
+                  <th>Ticket ID</th>
+                  <th>Name</th>
+                  <th>Number</th>
+                  <th>QR</th>
                 </tr>
-              )}
+              </thead>
 
-            </tbody>
+              <tbody>
+                {tickets.map((ticket) => (
+                  <tr key={ticket.ticket_id}>
+                    <td>{ticket.sl_no}</td>
 
-          </table>
+                    <td>
+                      <strong>
+                        {ticket.ticket_id}
+                      </strong>
+                    </td>
 
-        </div>
+                    <td>{ticket.name}</td>
 
+                    <td>{ticket.number}</td>
+
+                    <td>
+                      <button
+                        className="table-button"
+                        onClick={() =>
+                          handleSelectTicket(
+                            ticket
+                          )
+                        }
+                      >
+                        View QR
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
-
-      {/* ================================
-          BULK IMPORT MODAL
-      ================================= */}
 
       {showBulkConfirmation &&
         bulkPreview && (
-          <div className="modal-overlay">
-
+          <div className="modal-backdrop">
             <div className="modal">
-
-              <div className="modal-header">
-
+              <div className="modal-top">
                 <div>
-                  <div className="card-kicker">
+                  <div className="eyebrow">
                     IMPORT CONFIRMATION
                   </div>
 
-                  <h2>
-                    Import Excel?
-                  </h2>
+                  <h2>Import Tickets?</h2>
                 </div>
 
                 <button
                   className="modal-close"
-                  onClick={
-                    handleCancelBulkImport
-                  }
+                  onClick={handleCancelImport}
                   disabled={isImporting}
                 >
                   ×
                 </button>
-
               </div>
 
-              <div className="modal-file">
-                <strong>
-                  {selectedExcelFile?.name}
-                </strong>
-              </div>
+              <p className="file-name">
+                {selectedExcelFile?.name}
+              </p>
 
-              <div className="import-stats">
-
-                <div className="import-stat">
-                  <span>Total Rows</span>
+              <div className="stats">
+                <div>
+                  <span>Total</span>
                   <strong>
-                    {
-                      bulkPreview
-                        .importedTickets
-                        .length
-                    }
+                    {bulkPreview.total}
                   </strong>
                 </div>
 
-                <div className="import-stat">
-                  <span>New Tickets</span>
+                <div>
+                  <span>New</span>
                   <strong>
-                    {
-                      bulkPreview
-                        .newTickets
-                        .length
-                    }
+                    {bulkPreview.newTickets.length}
                   </strong>
                 </div>
 
-                <div className="import-stat">
+                <div>
                   <span>Existing</span>
                   <strong>
                     {
                       bulkPreview
-                        .existingTickets
-                        .length
+                        .existingTickets.length
                     }
                   </strong>
                 </div>
-
               </div>
 
               {bulkPreview.existingTickets
                 .length > 0 && (
-                <div className="modal-warning">
+                <div className="warning-box">
                   {
-                    bulkPreview
-                      .existingTickets
+                    bulkPreview.existingTickets
                       .length
-                  } ticket IDs already exist
-                  and will be skipped.
+                  }{" "}
+                  existing ticket IDs will be
+                  skipped.
                 </div>
               )}
 
               <div className="modal-actions">
-
                 <button
-                  className="btn btn-secondary"
-                  onClick={
-                    handleCancelBulkImport
-                  }
+                  className="button secondary"
+                  onClick={handleCancelImport}
                   disabled={isImporting}
                 >
                   Cancel
                 </button>
 
                 <button
-                  className="btn btn-primary"
-                  onClick={
-                    handleConfirmBulkImport
+                  className="button primary"
+                  onClick={handleConfirmImport}
+                  disabled={
+                    isImporting ||
+                    bulkPreview.newTickets
+                      .length === 0
                   }
-                  disabled={isImporting}
                 >
                   {isImporting
                     ? "Importing..."
                     : "Import Tickets"}
                 </button>
-
               </div>
-
             </div>
-
           </div>
         )}
-
     </main>
   );
 }
