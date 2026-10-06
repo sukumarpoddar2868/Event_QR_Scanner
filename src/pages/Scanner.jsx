@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
+
 import QRScanner from "../components/QRScanner";
+
 import {
   addTickets,
   checkInTicket,
   clearTickets,
   getAllTickets,
 } from "../db/database";
+
 import { readExcelFile } from "../utils/excel";
+
+import {
+  enableScannerSound,
+  playSuccessSound,
+  playWarningSound,
+  playErrorSound,
+} from "../utils/sound";
 
 export default function Scanner() {
   const [tickets, setTickets] = useState([]);
@@ -33,13 +43,16 @@ export default function Scanner() {
   const [isImporting, setIsImporting] =
     useState(false);
 
+  // Load tickets from IndexedDB
   useEffect(() => {
     async function load() {
       try {
         const stored = await getAllTickets();
+
         setTickets(stored);
       } catch (err) {
         console.error(err);
+
         setError(
           "Failed to load scanner database."
         );
@@ -47,6 +60,38 @@ export default function Scanner() {
     }
 
     load();
+  }, []);
+
+  // Enable audio after the user interacts
+  // with the scanner page.
+  useEffect(() => {
+    function handleUserInteraction() {
+      enableScannerSound();
+    }
+
+    window.addEventListener(
+      "click",
+      handleUserInteraction,
+      { once: true }
+    );
+
+    window.addEventListener(
+      "touchstart",
+      handleUserInteraction,
+      { once: true }
+    );
+
+    return () => {
+      window.removeEventListener(
+        "click",
+        handleUserInteraction
+      );
+
+      window.removeEventListener(
+        "touchstart",
+        handleUserInteraction
+      );
+    };
   }, []);
 
   const checkedInCount = tickets.filter(
@@ -64,7 +109,10 @@ export default function Scanner() {
         .trim()
         .toUpperCase();
 
+      // Empty QR code
       if (!cleanId) {
+        playErrorSound();
+
         setScanResult({
           type: "error",
           title: "INVALID QR CODE",
@@ -79,7 +127,12 @@ export default function Scanner() {
         const result =
           await checkInTicket(cleanId);
 
+        // =========================
+        // VALID TICKET
+        // =========================
         if (result.success) {
+          playSuccessSound();
+
           setScanResult({
             type: "success",
             title: "ENTRY ALLOWED",
@@ -97,10 +150,15 @@ export default function Scanner() {
           return;
         }
 
+        // =========================
+        // ALREADY CHECKED IN
+        // =========================
         if (
           result.reason ===
           "ALREADY_CHECKED_IN"
         ) {
+          playWarningSound();
+
           setScanResult({
             type: "warning",
             title: "ALREADY CHECKED IN",
@@ -110,9 +168,14 @@ export default function Scanner() {
           return;
         }
 
+        // =========================
+        // INVALID TICKET
+        // =========================
         if (
           result.reason === "NOT_FOUND"
         ) {
+          playErrorSound();
+
           setScanResult({
             type: "error",
             title: "INVALID TICKET",
@@ -126,6 +189,11 @@ export default function Scanner() {
           return;
         }
 
+        // =========================
+        // OTHER CHECK-IN FAILURE
+        // =========================
+        playErrorSound();
+
         setScanResult({
           type: "error",
           title: "CHECK-IN FAILED",
@@ -134,6 +202,8 @@ export default function Scanner() {
         });
       } catch (err) {
         console.error(err);
+
+        playErrorSound();
 
         setScanResult({
           type: "error",
@@ -182,14 +252,17 @@ export default function Scanner() {
       const importedTickets = rows.map(
         (row) => ({
           sl_no: Number(row.sl_no),
+
           ticket_id: String(
             row.ticket_id || ""
           )
             .trim()
             .toUpperCase(),
+
           name: String(
             row.name || ""
           ).trim(),
+
           number: String(
             row.number ||
               row.phone ||
@@ -198,6 +271,7 @@ export default function Scanner() {
         })
       );
 
+      // Validate required fields
       const invalidIndex =
         importedTickets.findIndex(
           (ticket) =>
@@ -216,6 +290,7 @@ export default function Scanner() {
         return;
       }
 
+      // Check duplicate IDs inside Excel
       const ids =
         importedTickets.map((ticket) =>
           ticket.ticket_id.toLowerCase()
@@ -231,6 +306,7 @@ export default function Scanner() {
         return;
       }
 
+      // Check IDs already in scanner database
       const existingIds = new Set(
         tickets.map((ticket) =>
           ticket.ticket_id.toLowerCase()
@@ -416,7 +492,9 @@ export default function Scanner() {
               TICKET DATABASE
             </div>
 
-            <h2>Import Master Excel</h2>
+            <h2>
+              Import Master Excel
+            </h2>
 
             <p>
               Load the master ticket file before
@@ -479,7 +557,9 @@ export default function Scanner() {
               !
             </div>
 
-            <h3>No tickets loaded</h3>
+            <h3>
+              No tickets loaded
+            </h3>
 
             <p>
               Import the master Excel file before
@@ -534,7 +614,9 @@ export default function Scanner() {
 
                 {scanResult.ticket.number && (
                   <p>
-                    <strong>Number:</strong>{" "}
+                    <strong>
+                      Number:
+                    </strong>{" "}
                     {
                       scanResult.ticket
                         .number
@@ -549,7 +631,8 @@ export default function Scanner() {
                       Checked in:
                     </strong>{" "}
                     {new Date(
-                      scanResult.ticket.checkedInAt
+                      scanResult.ticket
+                        .checkedInAt
                     ).toLocaleTimeString()}
                   </p>
                 )}
